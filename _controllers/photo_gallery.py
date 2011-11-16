@@ -140,7 +140,7 @@ def processsubdirectories(pathelements):
     """For each subdirectory inside the path described by pathelements,
     recursively generate either photo or album indexes."""
     dirname = os.path.join(*pathelements)  # pylint: disable=W0142
-    MODULELOG.info('Building subdir %s', pathelements)
+    MODULELOG.debug('Building subdir %s', pathelements)
 
     for subdir in getsubdirs(dirname):
         processsubdirectories(pathelements + [subdir])
@@ -158,7 +158,7 @@ def processsubdirectories(pathelements):
                 # If this photo doesn't have a thumbnail already, make one
                 thumbfilename = '%s-thumb%s' % os.path.splitext(photofilename)
                 if not os.path.exists(thumbfilename):
-                    MODULELOG.info('Thumbnailing %s => %s', photofilename, thumbfilename)
+                    MODULELOG.debug('Thumbnailing %s => %s', photofilename, thumbfilename)
                     image = Image.open(photofilename)
                     image.thumbnail(CONFIG.thumbnailsize, Image.ANTIALIAS)
                     image.save(thumbfilename, 'JPEG')
@@ -172,7 +172,7 @@ def processsubdirectories(pathelements):
         # If this subdirectory has photos in it, create a photo index.
         # Otherwise create an album index.
         if photos:
-            MODULELOG.info('Indexing %d photos', len(photos))
+            MODULELOG.debug('Indexing %d photos', len(photos))
             for photo in photos:
                 bf.writer.materialize_template(
                     'photo.mako',
