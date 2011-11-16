@@ -1,0 +1,34 @@
+.clear-block:after
+{
+	clear:both;
+	content:".";
+	display:block;
+	height:0;
+	visibility:hidden;
+}
+
+.clear-block
+{
+	display:block;
+}
+
+* html .clear-block
+{
+	height:1%;
+}
+
+.thumbnail {
+	height: 128px;
+	width: auto;
+	margin: 5px;
+}
+
+.photo {
+	width: 90%;
+	height: auto;
+}
+
+.gallery {
+	float: left;
+	margin: 10px;
+}
