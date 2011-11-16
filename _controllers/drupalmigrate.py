@@ -63,6 +63,8 @@ CONFIG = bf.config.controllers.drupalmigrate
 
 def init():
     """Call makerewriterules() after the rest of the site is build, if configured"""
+    if not CONFIG.enabled:
+        return
     oldpostbuild = bf.config.post_build
 
     def post_build_makerewriterules():
