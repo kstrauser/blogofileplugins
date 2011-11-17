@@ -30,8 +30,11 @@ To enable it:
 directory contains both images and subdirectories, it will only render the
 photo index and not the album index.
 
-6. In each photo index, make a symlink called "showcase.jpg" to the image you want
-to use as the link image in the album index which points to that photo index.
+6. In each photo index, make a symlink called "showcase.jpg" to the image you
+want to use as the link image in the album index which points to that photo
+index. Note: you'll probably want to link to to "photo-thumb.jpg" or possibly
+"photo-medium.jpg" instead of "photo.jpg" unless you had your visitors and
+want to abuse them.
 
 To add a caption to a directory, create a file in that directory named
 "index.markdown".
