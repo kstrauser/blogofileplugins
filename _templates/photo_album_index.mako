@@ -5,8 +5,8 @@
 <h2>Albums</h2>
 
 <div class="clear-block">
-% for dir in dirs:
-<div class="gallery"><a href="${dir[0]}"><img src="${dir[0]}/showcase.jpg" alt="${dir[0]} gallery" class="thumbnail" /></a>${dir[1]}</div>
+% for subdir in subdirs:
+<div class="gallery"><a href="${subdir['name']}"><img src="${subdir['name']}/showcase.jpg" alt="${subdir['name']} gallery" class="thumbnail" /></a>${subdir['caption']}</div>
 % endfor
 </div>
 
@@ -14,5 +14,5 @@
   ${caption}
 % endif
 
-<%namespace name="externalcode" file="externalcode.mako"/>
-${externalcode.disquscomments(indexurl)}
+<%namespace name="extdisqus" file="extdisqus.mako"/>
+${extdisqus.disquscomments(indexurl, slug)}

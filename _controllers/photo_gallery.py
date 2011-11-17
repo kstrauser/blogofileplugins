@@ -45,14 +45,9 @@ Inspired by Louwrentius's "'Improved' image gallery for Blogofile" at
 http://louwrentius.com/blog/2011/01/'improved'-image-gallery-for-blogofile/
 """
 
-# A retarded little photo gallery for Blogofile.
-# Messed up by Louwrentius
-
-# Read all the photos in the /photos directory and create a page for each along
-# with Disqus comments.
-
 import logging
 import os
+import string  # pylint: disable=W0402
 from PIL import Image
 
 from blogofile.cache import bf
@@ -62,12 +57,16 @@ config = {  # pylint: disable=C0103
     'name': 'Photo Galleries',
     'description': 'Nested photo albums with thumbnails, breadcrumbs, Markdown captions, etc.',
     'author': 'Kirk Strauser <kirk@strauser.com>',
+    'mediumsize': (800, 600),
+    'thumbnailsize': (128, 128),
 }
 
 MODULELOG = logging.getLogger(__name__)
 MODULELOG.setLevel(logging.INFO)
 
 CONFIG = bf.config.controllers.photo_gallery
+
+SLUGS = set()
 
 
 def init():
@@ -87,23 +86,25 @@ def run():
 
 def getsubdirs(dirname):
     """Return a list of names of subdirectories in the named directory"""
-    return [subdir for subdir in os.listdir(dirname)
+    return [subdir for subdir in sorted(os.listdir(dirname))
             if os.path.isdir(os.path.join(dirname, subdir))]
 
 
 def generatealbumindex(pathelements):
     """Create an index page with links to all child albums in the directory"""
     dirname = os.path.join(*pathelements)  # pylint: disable=W0142
-    subdirs = [(subdir, getcaptionfromfile(os.path.join(dirname, subdir + '.markdown')))
-               for subdir in getsubdirs(dirname)
-               if os.listdir(os.path.join(dirname, subdir))]
+    subdirs = [{'name': subdir,
+                'caption': getcaptionfromfile(os.path.join(dirname, subdir + '.markdown'))}
+       for subdir in getsubdirs(dirname)
+       if os.listdir(os.path.join(dirname, subdir))]
     bf.writer.materialize_template(
         'photo_album_index.mako',
         (dirname, "index.html"),
         {'breadcrumbs': makebreadcrumbs(pathelements),
          'caption': getcaptionfromfile(os.path.join(dirname, 'index.markdown')),
          'indexurl': makeurl(pathelements, ''),
-         'dirs': subdirs})
+         'slug': makepathslug(pathelements),
+         'subdirs': subdirs})
 
 
 def getcaptionfromfile(filename):
@@ -128,12 +129,67 @@ def makebreadcrumbs(pathelements):
     return '&nbsp;/&nbsp;'.join(breadcrumbs)
 
 
+def makepathslug(pathelements):
+    """Return a distinct identifier for the given path"""
+    return 'photo-gallery-' + '-'.join(pathelements)
+
+
 def makeurl(pathelements, filename):
     """Given all the elements describing a location, return a link to it"""
     return '%s%s/%s' % (
         bf.config.site.url,
         '/'.join(pathelements),
         filename)
+
+
+def prepareimage(filename):
+    """If the file is a not an image we want to display in the gallery, return
+    None. Otherwise generate all appropriate thumbnails and return a dict
+    with their types and filenames."""
+    testname = filename.lower()
+
+    # Skip all files that aren't jpgs or that are reduced-size versions of
+    # other jpgs.
+    if not testname.endswith('.jpg') or os.path.islink(testname):
+        return None
+    for ignore in ['-medium.jpg', '-thumb.jpg']:
+        if testname.endswith(ignore):
+            return None
+
+    photoinfo = {'original': os.path.basename(filename)}
+    namebase, extension = os.path.splitext(filename)
+    for imagetype, size in [('thumb', CONFIG.thumbnailsize),
+                            ('medium', CONFIG.mediumsize)]:
+        reducedfilename = '%s-%s%s' % (namebase, imagetype, extension)
+        photoinfo[imagetype] = os.path.basename(reducedfilename)
+        if os.path.exists(reducedfilename):
+            continue
+        MODULELOG.debug('Making %s version of %s: %s', imagetype, filename, reducedfilename)
+        image = Image.open(filename)
+        image.thumbnail(size, Image.ANTIALIAS)
+        image.save(reducedfilename, 'JPEG')
+
+    # Generate a unique identifier for each image. Note! If
+    goodchars = string.lowercase + string.digits
+    slug = ''.join(char if char in goodchars else '-' for char in photoinfo['original'].lower())
+    while '--' in slug:
+        slug = slug.replace('--', '-')
+    slug = slug.strip('-')
+
+    if slug in SLUGS:
+        MODULELOG.warning('Duplicate slug for %s', filename)
+        if slug[-1].isdigit():
+            slug = slug.rsplit('-', 1)[0]
+        counter = 1
+        while True:
+            newslug = '%s-%d' % (slug, counter)
+            if newslug not in SLUGS:
+                slug = newslug
+                break
+    SLUGS.add(slug)
+
+    photoinfo['slug'] = slug
+    return photoinfo
 
 
 def processsubdirectories(pathelements):
@@ -143,50 +199,41 @@ def processsubdirectories(pathelements):
     MODULELOG.debug('Building subdir %s', pathelements)
 
     for subdir in getsubdirs(dirname):
-        processsubdirectories(pathelements + [subdir])
+        subdirelements = pathelements + [subdir]
+        processsubdirectories(subdirelements)
         fullsubdir = os.path.join(dirname, subdir)
 
         # Build a list of all the photos in this subdirectory, their
         # thumbsnails, and their captions.
         photos = []
-        for photo in os.listdir(fullsubdir):
+        for photo in sorted(os.listdir(fullsubdir)):
             photofilename = os.path.join(fullsubdir, photo)
-            if photo.lower().endswith('.jpg') \
-              and not photo.lower().endswith('-thumb.jpg') \
-              and not os.path.islink(photofilename):
+            photoinfo = prepareimage(photofilename)
+            if not photoinfo:
+                continue
+            photoinfo.update({
+                'breadcrumbs': makebreadcrumbs(pathelements + [subdir, photoinfo['original']]),
+                'caption': getcaptionfromfile(photofilename + '.markdown'),
+                'photourl': makeurl(subdirelements, photoinfo['original'])})
+            photos.append(photoinfo)
 
-                # If this photo doesn't have a thumbnail already, make one
-                thumbfilename = '%s-thumb%s' % os.path.splitext(photofilename)
-                if not os.path.exists(thumbfilename):
-                    MODULELOG.debug('Thumbnailing %s => %s', photofilename, thumbfilename)
-                    image = Image.open(photofilename)
-                    image.thumbnail(CONFIG.thumbnailsize, Image.ANTIALIAS)
-                    image.save(thumbfilename, 'JPEG')
-                thumb = os.path.basename(thumbfilename)
+        # If this subdirectory doesn't have photos in it, create an album index and move on.
+        if not photos:
+            generatealbumindex(subdirelements)
+            continue
 
-                photos.append({
-                    'photo': photo,
-                    'thumb': thumb,
-                    'caption': getcaptionfromfile(photofilename + '.markdown')})
-
-        # If this subdirectory has photos in it, create a photo index.
         # Otherwise create an album index.
-        if photos:
-            MODULELOG.debug('Indexing %d photos', len(photos))
-            for photo in photos:
-                bf.writer.materialize_template(
-                    'photo.mako',
-                    (fullsubdir, photo['photo'] + '.html'),
-                    {'breadcrumbs': makebreadcrumbs(pathelements + [subdir, photo['photo']]),
-                     'photo': photo,
-                     'photourl': makeurl(pathelements + [subdir], photo['photo'])})
-
+        MODULELOG.debug('Indexing %d photos', len(photos))
+        for photo in photos:
             bf.writer.materialize_template(
-                'photo_index.mako',
-                (fullsubdir, 'index.html'),
-                {'breadcrumbs': makebreadcrumbs(pathelements + [subdir]),
-                 'caption': getcaptionfromfile(os.path.join(fullsubdir, 'index.markdown')),
-                 'indexurl': makeurl(pathelements + [subdir], ''),
-                 'photos': photos})
-        else:
-            generatealbumindex(pathelements + [subdir])
+                'photo.mako',
+                (fullsubdir, photo['original'] + '.html'),
+                photo)
+        bf.writer.materialize_template(
+            'photo_index.mako',
+            (fullsubdir, 'index.html'),
+            {'breadcrumbs': makebreadcrumbs(subdirelements),
+             'caption': getcaptionfromfile(os.path.join(fullsubdir, 'index.markdown')),
+             'indexurl': makeurl(subdirelements, ''),
+             'photos': photos,
+             'slug': makepathslug(subdirelements)})

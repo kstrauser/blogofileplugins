@@ -2,11 +2,11 @@
 
 <p>Path: ${breadcrumbs}</p>
 
-<img src="${photo['photo']}" class="photo" alt="${photourl}" />
+<a href="${original}"><img src="${medium}" class="photo" alt="${photourl}" /></a>
 
-% if photo['caption']:
-  ${photo['caption']}
+% if caption:
+  ${caption}
 % endif
 
-<%namespace name="externalcode" file="externalcode.mako"/>
-${externalcode.disquscomments(photourl)}
+<%namespace name="extdisqus" file="extdisqus.mako"/>
+${extdisqus.disquscomments(photourl, slug)}
