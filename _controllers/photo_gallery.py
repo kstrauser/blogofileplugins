@@ -107,7 +107,8 @@ def generatealbumindex(pathelements):
          'caption': getcaptionfromfile(os.path.join(dirname, 'index.markdown')),
          'indexurl': makeurl(pathelements, ''),
          'slug': makepathslug(pathelements),
-         'subdirs': subdirs})
+         'subdirs': subdirs,
+         'title': '%s gallery' % pathelements[-1]})
 
 
 def getcaptionfromfile(filename):
@@ -217,7 +218,8 @@ def processsubdirectories(pathelements):
             photoinfo.update({
                 'breadcrumbs': makebreadcrumbs(pathelements + [subdir, photoinfo['original']]),
                 'caption': getcaptionfromfile(photofilename + '.markdown'),
-                'photourl': makeurl(subdirelements, photoinfo['original'])})
+                'photourl': makeurl(subdirelements, photoinfo['original']),
+                'title': photoinfo['original']})
             photos.append(photoinfo)
 
         # If this subdirectory doesn't have photos in it, create an album index and move on.
@@ -239,4 +241,5 @@ def processsubdirectories(pathelements):
              'caption': getcaptionfromfile(os.path.join(fullsubdir, 'index.markdown')),
              'indexurl': makeurl(subdirelements, ''),
              'photos': photos,
-             'slug': makepathslug(subdirelements)})
+             'slug': makepathslug(subdirelements),
+             'title': '%s gallery' % subdir})
