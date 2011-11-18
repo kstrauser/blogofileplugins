@@ -28,7 +28,32 @@
 	height: auto;
 }
 
-.gallery {
-	float: left;
-	margin: 10px;
+.gallery
+{
+	width: 160px;
+	float:left;
+	text-align: center;
+	padding-bottom: 8px;
+}
+
+.galleryimage
+{
+	margin:0;
+	padding: 0px 16px 0 16px;
+	width: 128px;
+	height: 128px;
+	line-height: 128px;
+}
+
+.gallerycaption
+{
+	display: inline-block;
+	width:auto;
+	margin: 0;
+	padding: 0;
+	text-align: left;
+}
+
+.gallerycaption p {
+	margin: 0;
 }
