@@ -44,7 +44,7 @@ config = {  # pylint: disable=C0103
     # Relative to the blog directory
     'indexfile': 'drupalindex.mako',
     # The types of Drupal nodes to include in the index
-    'nodetypes': ('acidfree', 'blog', 'page', 'story'),
+    'indexnodetypes': ('acidfree', 'blog', 'page', 'story'),
     # The Location of Drupal within your website (eg, is it under /drupal?).
     # Analogous to blog.path.
     'drupalpath': '/',
@@ -53,12 +53,52 @@ config = {  # pylint: disable=C0103
     'user': 'foo',
     'passwd': 'passwd',
     'db': 'drupaldb',
+
+    # Whether to create a set of posts from Drupal nodes
+    'makeposts': False,
+    # The serial number the number of the first post to generate
+    'startpostnum': 100,
+    # The types of Drupal nodes to convert to Blogofile posts
+    'convertnodetypes': ('blog', 'page', 'story'),
+    # The username of the primary Drupal blogger. Other usernames will get
+    # "Guest post" titles.
+    'mainusername': 'admin',
 }
 
 MODULELOG = logging.getLogger(__name__)
 MODULELOG.setLevel(logging.INFO)
 
 CONFIG = bf.config.controllers.drupalmigrate
+
+SQL = {
+    'getnodes': """\
+SELECT
+    node.created,
+    url_alias.dst,
+    node.nid,
+    node.title,
+    node.type,
+    node_revisions.body,
+    node_revisions.teaser,
+    users.name AS username
+FROM
+    node
+    LEFT JOIN url_alias ON url_alias.src = CONCAT('node/', node.nid)
+    JOIN node_revisions ON node.nid = node_revisions.nid
+    JOIN users ON node.uid = users.uid
+WHERE
+    node.status = 1
+ORDER BY created DESC""",
+
+    'getnodetags': """\
+SELECT
+    name
+FROM
+    term_node
+    JOIN term_data ON term_node.tid = term_data.tid
+WHERE
+    term_node.nid = %s""",
+}
 
 
 def init():
@@ -78,8 +118,20 @@ def init():
 
 def run():
     """Execute all the requested migration actions"""
-    if CONFIG.makeindex:
+    if CONFIG.makeindex or CONFIG.makeposts:
         makeindex()
+
+
+def getnodesbytypes():
+    """Get a list of all nodes that are one of the given types"""
+    dbconn = MySQLdb.connect(host=CONFIG.host, user=CONFIG.user, passwd=CONFIG.passwd, db=CONFIG.db)
+    cursor = dbconn.cursor()
+    cursor.execute(SQL['getnodes'] % ', '.join(repr(MySQLdb.escape_string(nodetype))
+                                               for nodetype in CONFIG.convertnodetypes))
+    fields = [field[0] for field in cursor.description]
+    rows = cursor.fetchall()
+    dbconn.close()
+    return [dict(zip(fields, row)) for row in rows]
 
 
 def makeindex():
@@ -92,70 +144,93 @@ def makeindex():
 
     dbconn = MySQLdb.connect(host=CONFIG.host, user=CONFIG.user, passwd=CONFIG.passwd, db=CONFIG.db)
     cursor = dbconn.cursor()
-    cursor.execute("""\
-SELECT
-    created,
-    dst,
-    nid,
-    title,
-    type
-FROM
-    node
-    LEFT JOIN url_alias ON url_alias.src = CONCAT('node/', node.nid)
-WHERE
-    type IN (%s) AND
-    status = 1
-ORDER BY created DESC""" % ', '.join(repr(MySQLdb.escape_string(nodetype))
-                                     for nodetype in CONFIG.nodetypes))
+    cursor.execute(SQL['getnodes'])
     fields = [field[0] for field in cursor.description]
+    nodes = [dict(zip(fields, row)) for row in cursor.fetchall()]
 
     # Get a set of permalinks to Blogofile posts in the same format as Drupal's
     # permalinks.
-    currentblogs = {urlparse.urlparse(post.permalink).path.lstrip('/')  # pylint: disable=E1101
+    currentblogs = {urlparse.urlparse(post.permalink).path.strip('/')  # pylint: disable=E1101
                     for post in bf.config.blog.posts}
     linkcount = 0
+    postcount = 0
     seennodes = set()
-    with open(CONFIG.indexfile, 'w') as indexfile:
+
+    if CONFIG.makeindex:
+        indexfile = open(CONFIG.indexfile, 'w')
         indexfile.write('<ul>\n')
-        for row in cursor.fetchall():
-            row = dict(zip(fields, row))
-            thisnode = (row['type'], row['nid'])
 
-            # Only generate one link to a given node
-            if thisnode in seennodes:
-                continue
-            seennodes.add(thisnode)
+    for row in nodes:
+        thisnode = (row['type'], row['nid'])
 
-            try:
-                dst = unicode(row['dst'])
-                title = unicode(row['title'])
-            except UnicodeDecodeError:
-                continue
+        # Only generate one link to a given node
+        if thisnode in seennodes:
+            continue
+        seennodes.add(thisnode)
 
-            # Use Pathauto's permalink, if available. Otherwise use the
-            # standard Drupal node link
-            if dst:
-                permalink = dst
-            else:
-                permalink = '/'.join(thisnode)
+        try:
+            dst = unicode(row['dst'])
+            title = unicode(row['title'])
+        except UnicodeDecodeError:
+            continue
 
-            # Once we've migrated a node to Blogofile, remove it from the
-            # legacy index.
-            if permalink in currentblogs:
-                MODULELOG.info('Skipping %s', permalink)
-                continue
+        # Use Pathauto's permalink, if available. Otherwise use the
+        # standard Drupal node link
+        if dst:
+            slug = dst.strip('/')
+        else:
+            slug = '/'.join(thisnode)
+        permalink = bf.config.site.url + slug + '/'
 
+        if CONFIG.makeindex and row['type'] in CONFIG.indexnodetypes \
+              and not slug in currentblogs:
             indexfile.write(
-                '<li><h2 class="title"><a href="%s%s">%s</a></h2>'
+                '<li><a href="%s%s">%s</a> '
                 '<span class="submitted">%s</span></li>\n' % (
                 CONFIG.drupalpath,
-                permalink,
+                slug,
                 title,
                 datetime.datetime.fromtimestamp(row['created']) \
                     .strftime("%B %d, %Y at %I:%M %p")))
             linkcount += 1
+
+        if CONFIG.makeposts and row['type'] in CONFIG.convertnodetypes:
+            cursor.execute(SQL['getnodetags'], row['nid'])
+            tags = [tag[0] for tag in cursor.fetchall()]
+
+            if row['username'] != CONFIG.mainusername:
+                title = 'Guest post by %s: %s' % (row['username'], title)
+                tags.append(row['username'])
+
+            with open('_posts/%03d - %s.markdown' % (
+                  CONFIG.startpostnum + postcount,
+                  slug), 'wb') as postfile:
+                postfile.write("""\
+---
+categories: %(tags)s
+date: %(date)s
+title: '%(title)s'
+permalink: %(permalink)s
+slug: %(slug)s
+---
+%(body)s
+""" % {
+    'body': row['body'].replace('\r\n', '\n'),
+    'date': datetime.datetime.fromtimestamp(row['created']) \
+                    .strftime("%Y/%m/%d %H:%M:%S"),
+    'permalink': permalink,
+    'slug': slug,
+    'tags': ', '.join(sorted(tags)),
+    'title': title.replace("'", "''"),
+})
+            postcount += 1
+
+    if CONFIG.makeindex:
         indexfile.write('</ul>')
-    MODULELOG.info('Wrote %s links', linkcount)
+        indexfile.close()
+        MODULELOG.info('Wrote %s links', linkcount)
+    if CONFIG.makeposts:
+        MODULELOG.info('Wrote %s posts', postcount)
 
 
 def makerewriterules():
