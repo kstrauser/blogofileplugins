@@ -33,7 +33,7 @@ config = {  # pylint: disable=C0103
     # Whether to generate Apache RewriteRules to skip Blogofile posts
     'makerewriterules': True,
     # Relative to the blog directory
-    'rulefile': 'rewriterules.txt',
+    'exceptionrulefile': 'exceptionrewriterules.txt',
     # Include a special pattern to serve the site's root index with Blogofile.
     # If this is true, you need to provide an index.html page (as the
     # simple_blog setup does this by default).
@@ -63,6 +63,12 @@ config = {  # pylint: disable=C0103
     # The username of the primary Drupal blogger. Other usernames will get
     # "Guest post" titles.
     'mainusername': 'admin',
+
+    # Whether to make a list of redirects from old Drupal permalinks to new
+    # Blogofile permalinks
+    'makepermalinkredirs': False,
+    # Relative to the blog directory
+    'redirectrulefile': 'redirectrewriterules.txt',
 }
 
 MODULELOG = logging.getLogger(__name__)
@@ -119,23 +125,69 @@ def init():
 def run():
     """Execute all the requested migration actions"""
     if CONFIG.makeindex or CONFIG.makeposts:
-        makeindex()
+        transformnodes()
+    if CONFIG.makepermalinkredirs:
+        makepermalinkredirs()
 
 
-def getnodesbytypes():
-    """Get a list of all nodes that are one of the given types"""
-    dbconn = MySQLdb.connect(host=CONFIG.host, user=CONFIG.user, passwd=CONFIG.passwd, db=CONFIG.db)
-    cursor = dbconn.cursor()
-    cursor.execute(SQL['getnodes'] % ', '.join(repr(MySQLdb.escape_string(nodetype))
-                                               for nodetype in CONFIG.convertnodetypes))
-    fields = [field[0] for field in cursor.description]
-    rows = cursor.fetchall()
-    dbconn.close()
-    return [dict(zip(fields, row)) for row in rows]
+def makepermalinkredirs():
+    """Make a set of RewriteRules so that posts created from old Drupal nodes
+    (eg by 'makeposts') get redirects from their old permalinks to their new
+    locations"""
+    MODULELOG.info('Making permalink redirects')
+    siteurl = bf.config.site.url
+    stripcount = len(siteurl)
+    if siteurl.endswith('/'):
+        stripcount -= 1
+    with open(CONFIG.redirectrulefile, 'w') as rulefile:
+        for post in bf.config.blog.posts:
+            try:
+                drupalpermalink = post.drupalpermalink
+            except AttributeError:
+                continue
+            permalink = post.permalink
+            if not permalink.startswith(siteurl):
+                raise Exception('Bad permalink: %s' % permalink)
+            if not drupalpermalink.startswith(siteurl):
+                raise Exception('Bad drupalpermalink: %s' % drupalpermalink)
+            permalink = permalink[stripcount:]
+            drupalpermalink = drupalpermalink[stripcount:].rstrip('/')
+            rulefile.write('\tRewriteRule ^%s(/|$) %s [R=301,L]\n' % (drupalpermalink, permalink))
 
 
-def makeindex():
-    """Build an index of all interesting nodes from the Drupal site
+def makerewriterules():
+    """Make a set of RewriteRules so no Blogofile files are passed through to Drupal
+
+    From my Apache virtual domain config:
+
+        DirectoryIndex index.html
+
+        # This is the file named in config['rulefile']
+        Include /usr/local/www/htdocs/site.example.com/mysite/_site/rewriterules.txt
+
+        # Everything else is served by Drupal
+        RewriteRule ^/?(.*)$ http://site.example.com/$1 [P,L]
+
+    """
+
+    MODULELOG.info('Making RewriteRules')
+
+    ruletemplate = 'RewriteRule ^/%s%s - [L]\n'
+
+    with open(CONFIG.exceptionrulefile, 'w') as rulefile:
+        if CONFIG.includeindex:
+            rulefile.write(ruletemplate % ('', '$'))
+        for path in sorted(glob.glob('_site/*')):
+            if os.path.isdir(path):
+                patternending = '(/|$)'
+            else:
+                patternending = '$'
+            rulefile.write(ruletemplate % (os.path.basename(path), patternending))
+
+
+def transformnodes():
+    """Build an index of all interesting nodes from the Drupal site or create
+    Blogofile posts from them
 
     This connects to your Drupal site's MySQL database, downloads a list of
     nodes, and creates a static list of links to those nodes. Just <%include />
@@ -210,8 +262,8 @@ def makeindex():
 categories: %(tags)s
 date: %(date)s
 title: '%(title)s'
-permalink: %(permalink)s
-slug: %(slug)s
+drupalpermalink: %(permalink)s
+drupalslug: %(slug)s
 ---
 %(body)s
 """ % {
@@ -231,33 +283,3 @@ slug: %(slug)s
         MODULELOG.info('Wrote %s links', linkcount)
     if CONFIG.makeposts:
         MODULELOG.info('Wrote %s posts', postcount)
-
-
-def makerewriterules():
-    """Make a set of RewriteRules so no Blogofile files are passed through to Drupal
-
-    From my Apache virtual domain config:
-
-        DirectoryIndex index.html
-
-        # This is the file named in config['rulefile']
-        Include /usr/local/www/htdocs/site.example.com/mysite/_site/rewriterules.txt
-
-        # Everything else is served by Drupal
-        RewriteRule ^/?(.*)$ http://site.example.com/$1 [P,L]
-
-    """
-
-    MODULELOG.info('Making RewriteRules')
-
-    ruletemplate = 'RewriteRule ^/%s%s - [L]\n'
-
-    with open(CONFIG.rulefile, 'w') as rulefile:
-        if CONFIG.includeindex:
-            rulefile.write(ruletemplate % ('', '$'))
-        for path in sorted(glob.glob('_site/*')):
-            if os.path.isdir(path):
-                patternending = '(/|$)'
-            else:
-                patternending = '$'
-            rulefile.write(ruletemplate % (os.path.basename(path), patternending))
