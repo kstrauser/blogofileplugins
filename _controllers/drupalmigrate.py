@@ -263,7 +263,7 @@ categories: %(tags)s
 date: %(date)s
 title: '%(title)s'
 drupalpermalink: %(permalink)s
-drupalslug: %(slug)s
+slug: %(slug)s
 ---
 %(body)s
 """ % {
